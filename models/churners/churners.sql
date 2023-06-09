@@ -59,18 +59,17 @@ with
         with
             avg_t_time as (
                 select
-                    user_id,
-                    max(
-                        case when quartile = 4 then hours_since_last_activity / 24 end
+                    user_id, max(
+                        if (quartile = 4, hours_since_last_activity * 24,0)
                     ) as _80th_percentile,
                     avg(datetime_diff(created_date, created_date_1, hour))
-                    / 24 as avg_day_between_transaction,
+                    * 24 as avg_day_between_transaction,
                 from int_transaction_quartile
                 group by user_id
             ),
             joined as (
                 select
-                    avge.*,
+                    avge.*,                    
                     date_diff(
                         '2019-05-16', user.last_action_date, day
                     ) as days_since_last_transaction,
@@ -78,18 +77,15 @@ with
                         user.last_action_date,
                         interval cast(
                             round(
-                                if
-                                (
-                                    _80th_percentile is null,
-                                    avg_day_between_transaction,
-                                    _80th_percentile
-                                ),
+_80th_percentile
+                                ,
                                 0
                             ) as int64
                         ) day
                     ) as churned_date
                 from avg_t_time avge
                 left join `dbt_rclerc_user1.user_dash` user using (user_id)
+                             
             )
         select *
         from joined
@@ -106,6 +102,13 @@ select
         then null
         else date_diff(churned_date, date(created_date), month)
     end as month_when_churned,
+    case
+        when date_diff(churned_date, date(created_date), day) =0
+        then 1
+        when churned_date > '2019-05-16'
+        then 0
+        else date_diff(churned_date, date(created_date), day)
+    end as day_when_churned,
     c.cohort,
 from int_metodo_churn churn
 left join `neobank.users` firstt using (user_id)
