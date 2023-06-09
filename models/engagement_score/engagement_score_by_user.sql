@@ -36,5 +36,13 @@ FROM normalization)
 SELECT
   a.user_id
   , (engagement_score-min_score)/(max_score-min_score) *100 as engagement_score
+  , b.country
+  , b.generation
+  , b.cohort
+  , b.user_settings_crypto_unlocked
+  , b.num_contacts
+  , b.devices_type
+  , b.ratio_international
 FROM score a
 LEFT JOIN min_max on a.user_id IS NOT NULL
+LEFT JOIN `dbt_rclerc_user1.user_dash` b on a.user_id = b.user_id
