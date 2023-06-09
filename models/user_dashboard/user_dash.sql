@@ -10,6 +10,13 @@ with
         group by 1
     )
 
+, cohort as (
+    select
+    user_id
+    , PARSE_DATE("%Y-%m", CONCAT(extract (year from created_date), "-", extract (month from created_date))) AS cohort
+    from `neobank.users_devices`
+)
+
 select
     u.user_id,
     2023 - u.birth_year as age,
@@ -30,6 +37,7 @@ select
     u.country,
     u.city,
     date(u.created_date) as subscription_date,
+    c.cohort,
     t.first_action_date,
     t.last_action_date,
     date_diff(first_action_date, date(u.created_date), day) as days_sub_first,
@@ -47,3 +55,4 @@ select
 from `neobank.users_devices` u
 left join transactions_info t on t.user_id = u.user_id
 left join `dbt_rclerc_user1.ratio_amount` r on r.user_id = u.user_id
+left join cohort c on c.user_id = u.user_id
