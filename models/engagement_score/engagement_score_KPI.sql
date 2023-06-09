@@ -50,8 +50,9 @@ with
             ) as consecutive_notification
         from shifted_timeline
         order by user_id, created_date
-    ),
-    extract_time as (
+    )
+
+    ,extract_time as (
         select
             user_id,
             sum(consecutive_notification) * (-1) as sum_consecutive_notification,
@@ -65,8 +66,19 @@ with
             ) as time_between_transaction_notif
         from all_description
         group by user_id
-    ),
-    plan as (
+    )
+
+, notif_class_user as(
+    SELECT 
+        user_id
+        , CASE WHEN sum_consecutive_notification = 0 then 5
+                when sum_consecutive_notification = -1 then 1
+                when sum_consecutive_notification = -2 then 0
+                when sum_consecutive_notification = -3 then -2
+                else -5 end as consecutive_notification
+    from extract_time)
+
+, plan as (
         select
             user_id,
             case
@@ -98,8 +110,21 @@ with
             ) as difference_in_avg_time,
         from extract_time time
         left join neobank.churn_month_dbt dbt using (user_id)
-    ),
-    nb_country as (
+    )
+
+    , receptive_notif_class as (
+        SELECT
+            user_id
+            , CASE WHEN difference_in_avg_time >= -24 and difference_in_avg_time <= 24 then 1
+                when difference_in_avg_time >24 and difference_in_avg_time <= 168 then 3
+                when difference_in_avg_time >168 then 5
+                when difference_in_avg_time <-24 and difference_in_avg_time >= -168 then -3
+                when difference_in_avg_time <-168 then -5
+                end as receptive_notif_in_hours
+    from receptive_notif
+    )
+
+    , nb_country as (
         select
             t.user_id,
             t.transaction_id,
@@ -131,15 +156,16 @@ with
 
 select
     user_id,
-    time.sum_consecutive_notification as consecutive_notif,
-    r.difference_in_avg_time as receptive_notif_in_hours,
+    n.consecutive_notification,
+    r.receptive_notif_in_hours,
     u.days_sub_last as life_time_in_days,
     p.plan_score as type_of_card,
     u.nb_transactions,
+    ROUND(SAFE_DIVIDE(u.nb_transactions,u.days_sub_last),2) as Nb_trans_life_time,
     nb.nb_international_country
-from extract_time time
+from notif_class_user n
 left join neobank.churn_month_dbt dbt using (user_id)
-left join receptive_notif r using (user_id)
+left join receptive_notif_class r using (user_id)
 left join `dbt_rclerc_user1.user_dash` u using (user_id)
 left join plan p using (user_id)
 left join nb_country_user nb using (user_id)
