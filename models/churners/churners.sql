@@ -1,115 +1,122 @@
-with
-    fixed as (
-        select
-            *,
-            rank() over (partition by user_id order by created_date) as numbered_actions
-        from `jovial-rex-384219.neobank.total_timeline`
-        where reason is null
-        order by user_id, created_date
-    ),
-    shifted_timeline as (
-        select
-            a.*,
-            b.user_id as user_id_1,
-            b.created_date as created_date_1,
-            b.transactions_type as transactions_type_1,
-            b.reason as reason_1
-        from fixed a
-        left join
-            fixed b
-            on a.user_id = b.user_id
-            and a.numbered_actions = b.numbered_actions + 1
-    ),
-    int_ttt_view as (
-        select
-            *,
-            datetime_diff(
-                created_date, created_date_1, hour
-            ) as hours_since_last_activity,
-            case
-                when reason is null and transactions_type is null
-                then "creation_of_account"
-                when reason_1 is not null and transactions_type is not null
-                then "1_transaction_after_notif"
-                when reason_1 is null and transactions_type_1 is null and reason is null
-                then "transaction_after_creation"
-                when
-                    reason_1 is null
-                    and transactions_type_1 is null
-                    and reason is not null
-                then "notif_after_creation"
-                when reason_1 is null and transactions_type is not null
-                then "transaction_after_transaction"
-                when reason_1 is not null and reason is not null
-                then "consecutive_notif"
-                else null
-            end as description
-        from shifted_timeline
-        order by user_id, created_date
-    ),
-    int_transaction_quartile as (
-        select
-            *,
-            ntile(5) over (
-                partition by user_id order by hours_since_last_activity
-            ) as quartile
-        from int_ttt_view
-    ),
-    int_metodo_churn as (
-        with
-            avg_t_time as (
-                select
-                    user_id, max(
-                        if (quartile = 4, hours_since_last_activity * 24,0)
-                    ) as _80th_percentile,
-                    avg(datetime_diff(created_date, created_date_1, hour))
-                    * 24 as avg_day_between_transaction,
-                from int_transaction_quartile
-                group by user_id
-            ),
-            joined as (
-                select
-                    avge.*,                    
-                    date_diff(
-                        '2019-05-16', user.last_action_date, day
-                    ) as days_since_last_transaction,
-                    date_add(
-                        user.last_action_date,
-                        interval cast(
-                            round(
-_80th_percentile
-                                ,
-                                0
-                            ) as int64
-                        ) day
-                    ) as churned_date
-                from avg_t_time avge
-                left join `dbt_rclerc_user1.user_dash` user using (user_id)
-                             
-            )
-        select *
-        from joined
-    )
-
-select
+WITH
+  fixed AS (
+  SELECT
+    *,
+    RANK() OVER (PARTITION BY user_id ORDER BY created_date) AS numbered_actions
+  FROM
+    `jovial-rex-384219.neobank.total_timeline`
+  WHERE
+    reason IS NULL
+  ORDER BY
+    user_id,
+    created_date ),
+  shifted_timeline AS (
+  SELECT
+    a.*,
+    b.user_id AS user_id_1,
+    b.created_date AS created_date_1,
+    b.transactions_type AS transactions_type_1,
+    b.reason AS reason_1
+  FROM
+    fixed a
+  LEFT JOIN
+    fixed b
+  ON
+    a.user_id = b.user_id
+    AND a.numbered_actions = b.numbered_actions + 1 ),
+  int_ttt_view AS (
+  SELECT
+    *,
+    DATETIME_DIFF( created_date, created_date_1, hour ) AS hours_since_last_activity,
+    CASE
+      WHEN reason IS NULL AND transactions_type IS NULL THEN "creation_of_account"
+      WHEN reason_1 IS NOT NULL
+    AND transactions_type IS NOT NULL THEN "1_transaction_after_notif"
+      WHEN reason_1 IS NULL AND transactions_type_1 IS NULL AND reason IS NULL THEN "transaction_after_creation"
+      WHEN reason_1 IS NULL
+    AND transactions_type_1 IS NULL
+    AND reason IS NOT NULL THEN "notif_after_creation"
+      WHEN reason_1 IS NULL AND transactions_type IS NOT NULL THEN "transaction_after_transaction"
+      WHEN reason_1 IS NOT NULL
+    AND reason IS NOT NULL THEN "consecutive_notif"
+    ELSE
+    NULL
+  END
+    AS description
+  FROM
+    shifted_timeline
+  ORDER BY
+    user_id,
+    created_date ),
+  int_transaction_quartile AS (
+  SELECT
+    *,
+    NTILE(5) OVER (PARTITION BY user_id ORDER BY hours_since_last_activity ASC ) AS quartile
+  FROM
+    int_ttt_view ),
+  int_metodo_churn AS (
+  WITH
+    avg_t_time AS (
+    SELECT
+      user_id,
+      MAX(
+      IF
+        (quartile = 4, hours_since_last_activity / 24,0) ) AS _80th_percentile,
+      AVG(DATETIME_DIFF(created_date, created_date_1, hour)) / 24 AS avg_day_between_transaction,
+    FROM
+      int_transaction_quartile
+    GROUP BY
+      user_id ),
+    joined AS (
+    SELECT
+      avge.*,
+      DATE_DIFF( '2019-05-16', user.last_action_date, day ) AS days_since_last_transaction,
+      DATE_ADD( user.last_action_date, INTERVAL CAST( ROUND(
+          IF
+            (_80th_percentile > avg_day_between_transaction,_80th_percentile,avg_day_between_transaction), 0 ) AS int64 ) day ) AS churned_date
+    FROM
+      avg_t_time avge
+    LEFT JOIN
+      `dbt_rclerc_user1.user_dash` user
+    USING
+      (user_id) )
+  SELECT
+    *
+  FROM
+    joined ),
+  boolean_1 AS(
+  SELECT
     churn.*,
     firstt.created_date,
     user.last_action_date,
-    case
-        when churned_date is null
-        then 0
-        when churned_date > '2019-05-16'
-        then null
-        else date_diff(churned_date, date(created_date), month)
-    end as month_when_churned,
-    case
-        when date_diff(churned_date, date(created_date), day) =0
-        then 1
-        when churned_date > '2019-05-16'
-        then 0
-        else date_diff(churned_date, date(created_date), day)
-    end as day_when_churned,
+    CASE
+      WHEN churned_date IS NULL THEN 0
+      WHEN churned_date > '2019-05-01' THEN NULL
+    ELSE
+    DATE_DIFF(churned_date, DATE(created_date), month)
+  END
+    AS month_when_churned,
+    CASE
+      WHEN DATE_DIFF(churned_date, DATE(created_date), day) =0 THEN 1
+      WHEN churned_date > '2019-05-01' THEN null
+    ELSE
+    DATE_DIFF(churned_date, DATE(created_date), day)
+  END
+    AS day_when_churned,
     user.cohort,
-from int_metodo_churn churn
-left join `neobank.users` firstt using (user_id)
-left join `dbt_rclerc_user1.user_dash` user using (user_id)
+  FROM
+    int_metodo_churn churn
+  LEFT JOIN
+    `neobank.users` firstt
+  USING
+    (user_id)
+  LEFT JOIN
+    `dbt_rclerc_user1.user_dash` user
+  USING
+    (user_id))
+SELECT
+  *,
+IF
+  (day_when_churned IS NULL, 0,1) AS churned
+FROM
+  boolean_1
