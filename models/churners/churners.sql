@@ -109,8 +109,7 @@ select
         then 0
         else date_diff(churned_date, date(created_date), day)
     end as day_when_churned,
-    c.cohort,
+    user.cohort,
 from int_metodo_churn churn
 left join `neobank.users` firstt using (user_id)
 left join `dbt_rclerc_user1.user_dash` user using (user_id)
-left join `dbt_rclerc_user1.user_cohort` c using (user_id)
